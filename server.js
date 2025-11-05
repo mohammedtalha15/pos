@@ -1,12 +1,25 @@
+require('dotenv').config();
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const url = require('url');
+const { createClient } = require('@supabase/supabase-js');
 
-// In-memory order store and SSE clients
-const orders = [];
+// Initialize Supabase client
+const supabaseUrl = process.env.SUPABASE_URL;
+const supabaseKey = process.env.SUPABASE_ANON_KEY;
+
+if (!supabaseUrl || !supabaseKey) {
+  console.error('❌ Missing Supabase credentials!');
+  console.error('Please create a .env file with SUPABASE_URL and SUPABASE_ANON_KEY');
+  console.error('See .env.example for reference');
+  process.exit(1);
+}
+
+const supabase = createClient(supabaseUrl, supabaseKey);
+
+// SSE clients for real-time updates (optional, Supabase real-time can be used from frontend)
 const sseClients = new Set();
-let nextOrderId = 1;
 
 function sendSseEvent(eventName, data) {
   const payload = `event: ${eventName}\ndata: ${JSON.stringify(data)}\n\n`;
@@ -19,7 +32,7 @@ function serveStatic(req, res) {
   const parsed = url.parse(req.url);
   let reqPath = parsed.pathname;
   if (reqPath === '/') {
-    reqPath = '/public/waiter.html';
+    reqPath = '/public/index.html';
   }
 
   const filePath = path.join(__dirname, reqPath.replace(/^\/+/, ''));
@@ -85,21 +98,51 @@ function handleApi(req, res) {
   }
 
   if (pathname === '/api/orders' && req.method === 'GET') {
-    res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
-    res.end(JSON.stringify({ orders }));
+    (async () => {
+      try {
+        const { data, error } = await supabase
+          .from('orders')
+          .select('*')
+          .order('created_at', { ascending: false });
+
+        if (error) throw error;
+
+        // Transform Supabase format to API format
+        const orders = data.map(order => ({
+          id: order.id,
+          tableNumber: order.table_number,
+          items: order.items,
+          status: order.status,
+          createdAt: order.created_at,
+          notes: order.notes || '',
+          totalPrice: Number(order.total_price || 0),
+        }));
+
+        res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+        res.end(JSON.stringify({ orders }));
+      } catch (err) {
+        console.error('Error fetching orders:', err);
+        res.writeHead(500, { 'Content-Type': 'application/json; charset=utf-8' });
+        res.end(JSON.stringify({ error: 'Failed to fetch orders', details: String(err.message) }));
+      }
+    })();
     return true;
   }
 
   if (pathname === '/api/orders' && req.method === 'POST') {
     parseJsonBody(req)
-      .then((data) => {
+      .then(async (data) => {
         const tableNumberRaw = data.tableNumber;
         const itemsRaw = data.items;
+        const notesRaw = data.notes || '';
+        const totalPriceRaw = data.totalPrice;
 
         const tableNumber = Number(tableNumberRaw);
         const items = Array.isArray(itemsRaw)
           ? itemsRaw.map((s) => String(s)).filter((s) => s.trim().length > 0)
           : [];
+        const notes = String(notesRaw || '');
+        const totalPrice = Number(totalPriceRaw || 0);
 
         if (!Number.isInteger(tableNumber) || tableNumber <= 0) {
           res.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8' });
@@ -113,14 +156,37 @@ function handleApi(req, res) {
           return;
         }
 
+        // Insert into Supabase
+        const { data: orderData, error } = await supabase
+          .from('orders')
+          .insert({
+            table_number: tableNumber,
+            items: items,
+            status: 'new',
+            notes: notes || null,
+            total_price: Number.isFinite(totalPrice) ? totalPrice : 0,
+          })
+          .select()
+          .single();
+
+        if (error) {
+          console.error('Error creating order:', error);
+          res.writeHead(500, { 'Content-Type': 'application/json; charset=utf-8' });
+          res.end(JSON.stringify({ error: 'Failed to create order', details: String(error.message) }));
+          return;
+        }
+
+        // Transform to API format
         const order = {
-          id: String(nextOrderId++),
-          tableNumber,
-          items,
-          status: 'new',
-          createdAt: new Date().toISOString(),
+          id: orderData.id,
+          tableNumber: orderData.table_number,
+          items: orderData.items,
+          status: orderData.status,
+          createdAt: orderData.created_at,
+          notes: orderData.notes || '',
+          totalPrice: Number(orderData.total_price || 0),
         };
-        orders.push(order);
+
         sendSseEvent('order_created', order);
         res.writeHead(201, { 'Content-Type': 'application/json; charset=utf-8' });
         res.end(JSON.stringify(order));
@@ -137,20 +203,46 @@ function handleApi(req, res) {
     const parts = pathname.split('/');
     const id = parts[3];
     parseJsonBody(req)
-      .then((data) => {
+      .then(async (data) => {
         const status = String(data.status || '').trim();
         if (!status) {
           res.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8' });
           res.end(JSON.stringify({ error: 'Missing status' }));
           return;
         }
-        const order = orders.find((o) => o.id === id);
-        if (!order) {
-          res.writeHead(404, { 'Content-Type': 'application/json; charset=utf-8' });
-          res.end(JSON.stringify({ error: 'Order not found' }));
+
+        if (!['new', 'preparing', 'ready'].includes(status)) {
+          res.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8' });
+          res.end(JSON.stringify({ error: 'Invalid status. Must be: new, preparing, or ready' }));
           return;
         }
-        order.status = status;
+
+        // Update in Supabase
+        const { data: orderData, error } = await supabase
+          .from('orders')
+          .update({ status })
+          .eq('id', id)
+          .select()
+          .single();
+
+        if (error) {
+          console.error('Error updating order:', error);
+          res.writeHead(404, { 'Content-Type': 'application/json; charset=utf-8' });
+          res.end(JSON.stringify({ error: 'Order not found', details: String(error.message) }));
+          return;
+        }
+
+        // Transform to API format
+        const order = {
+          id: orderData.id,
+          tableNumber: orderData.table_number,
+          items: orderData.items,
+          status: orderData.status,
+          createdAt: orderData.created_at,
+          notes: orderData.notes || '',
+          totalPrice: Number(orderData.total_price || 0),
+        };
+
         sendSseEvent('order_updated', order);
         res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
         res.end(JSON.stringify(order));
@@ -202,9 +294,11 @@ const server = http.createServer((req, res) => {
 
 const PORT = process.env.PORT ? Number(process.env.PORT) : 3000;
 server.listen(PORT, () => {
-  console.log(`POS server running at http://localhost:${PORT}`);
-  console.log('Waiter UI:   /public/waiter.html');
-  console.log('Kitchen UI:  /public/kitchen.html');
+  console.log(`✅ POS server running at http://localhost:${PORT}`);
+  console.log(`📊 Dashboard: http://localhost:${PORT}/`);
+  console.log(`👨‍💼 Waiter UI: http://localhost:${PORT}/public/waiter.html`);
+  console.log(`👨‍🍳 Kitchen UI: http://localhost:${PORT}/public/kitchen.html`);
+  console.log(`🔗 Supabase: ${supabaseUrl}`);
 });
 
 
