@@ -123,8 +123,8 @@ pos/
 ## Environment Variables
 
 Required:
-- `SUPABASE_URL` - Your Supabase project URL
-- `SUPABASE_ANON_KEY` - Your Supabase anonymous key
+- `SUPABASE_URL` https://nyurfjdnbggbrptkwkpo.supabase.co
+- `SUPABASE_ANON_KEY` eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im55dXJmamRuYmdnYnJwdGt3a3BvIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjIzNjI0NDAsImV4cCI6MjA3NzkzODQ0MH0.pXqDtiR_3o8r0QQsqouIAPj9pYDxcY1aDBrHiVfklaI
 
 Optional:
 - `PORT` - Server port (default: 3000)
