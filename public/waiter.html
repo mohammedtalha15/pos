@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>POS - Waiter</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><text y='50%' x='50%' dominant-baseline='middle' text-anchor='middle' font-size='48'>🍽️</text></svg>">
+  </head>
+  <body class="min-h-screen bg-slate-950 text-slate-100">
+    <header class="sticky top-0 z-10 backdrop-blur supports-[backdrop-filter]:bg-slate-900/70 bg-slate-900/60 border-b border-slate-800">
+      <div class="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between">
+        <div class="flex items-center gap-3">
+          <span class="text-2xl">🍽️</span>
+          <h1 class="text-lg font-semibold tracking-tight">Restaurant POS</h1>
+        </div>
+        <nav class="flex items-center gap-2">
+          <a href="/public/waiter.html" class="px-3 py-1.5 rounded-md bg-slate-800 text-white">Waiter</a>
+          <a href="/public/kitchen.html" class="px-3 py-1.5 rounded-md text-slate-300 hover:bg-slate-800">Kitchen</a>
+        </nav>
+      </div>
+    </header>
+
+    <main class="max-w-6xl mx-auto px-4 py-6 grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <section class="rounded-xl border border-slate-800 bg-slate-900/60 shadow-xl">
+        <div class="p-5 border-b border-slate-800">
+          <h2 class="text-base font-semibold">Create Order</h2>
+          <p class="text-slate-400 text-sm">Enter table number and add items below.</p>
+        </div>
+        <form id="order-form" class="p-5 space-y-4">
+          <div class="grid grid-cols-1 md:grid-cols-6 gap-3 items-end">
+            <label class="md:col-span-2 text-sm text-slate-300">
+              Table Number
+              <input type="number" min="1" id="table" required class="mt-1 w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 outline-none focus:ring-2 focus:ring-sky-500" />
+            </label>
+            <label class="md:col-span-3 text-sm text-slate-300">
+              Item
+              <input type="text" id="item-input" placeholder="e.g. Margherita Pizza" class="mt-1 w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 outline-none focus:ring-2 focus:ring-sky-500" />
+            </label>
+            <button type="button" id="add-item" class="md:col-span-1 h-10 rounded-lg font-semibold bg-yellow-300 text-slate-900 hover:brightness-95">Add</button>
+          </div>
+          <div id="items-list" class="flex flex-wrap gap-2"></div>
+          <div class="flex gap-2">
+            <button type="submit" class="rounded-lg bg-sky-400 text-slate-900 font-semibold px-4 py-2 hover:brightness-95">Submit Order</button>
+            <button type="button" id="clear-items" class="rounded-lg border border-slate-700 px-4 py-2 text-slate-200 hover:bg-slate-800">Clear</button>
+          </div>
+          <p id="status" class="text-slate-400 text-sm min-h-[1.25rem]"></p>
+        </form>
+      </section>
+
+      <section class="rounded-xl border border-slate-800 bg-slate-900/60 shadow-xl">
+        <div class="p-5 border-b border-slate-800 flex items-center justify-between">
+          <h2 class="text-base font-semibold">Recent Orders</h2>
+          <button id="refresh-orders" class="rounded-md border border-slate-700 px-3 py-1.5 text-sm text-slate-200 hover:bg-slate-800">Refresh</button>
+        </div>
+        <ul id="orders" class="p-5 grid gap-3"></ul>
+      </section>
+    </main>
+
+    <script>
+      const items = [];
+      const itemsListEl = document.getElementById('items-list');
+      const ordersEl = document.getElementById('orders');
+      const statusEl = document.getElementById('status');
+
+      function renderItems() {
+        itemsListEl.innerHTML = '';
+        items.forEach((text, idx) => {
+          const chip = document.createElement('span');
+          chip.className = 'inline-flex items-center gap-2 rounded-full border border-slate-700 bg-slate-800 px-3 py-1 text-sm';
+          chip.innerHTML = `<span>${text}</span>`;
+          const x = document.createElement('button');
+          x.type = 'button';
+          x.className = 'text-slate-400 hover:text-slate-100';
+          x.textContent = '✕';
+          x.title = 'Remove';
+          x.addEventListener('click', () => { items.splice(idx, 1); renderItems(); });
+          chip.appendChild(x);
+          itemsListEl.appendChild(chip);
+        });
+      }
+
+      function addItem() {
+        const input = document.getElementById('item-input');
+        const value = (input.value || '').trim();
+        if (value) {
+          items.push(value);
+          input.value = '';
+          renderItems();
+        }
+        input.focus();
+      }
+
+      document.getElementById('add-item').addEventListener('click', addItem);
+      document.getElementById('item-input').addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          addItem();
+        }
+      });
+      document.getElementById('clear-items').addEventListener('click', () => {
+        items.splice(0, items.length);
+        renderItems();
+      });
+
+      document.getElementById('order-form').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        statusEl.textContent = '';
+        const tableNumber = Number(document.getElementById('table').value);
+        if (!Number.isInteger(tableNumber) || tableNumber <= 0) {
+          statusEl.textContent = 'Please enter a valid table number.';
+          return;
+        }
+        if (items.length === 0) {
+          statusEl.textContent = 'Please add at least one item.';
+          return;
+        }
+        try {
+          const res = await fetch('/api/orders', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ tableNumber, items }),
+          });
+          if (!res.ok) throw new Error('Failed to submit order');
+          const order = await res.json();
+          statusEl.textContent = `Order #${order.id} submitted.`;
+          items.splice(0, items.length);
+          renderItems();
+          document.getElementById('table').value = '';
+          prependOrder(order);
+        } catch (err) {
+          statusEl.textContent = 'Error submitting order. Please try again.';
+        }
+      });
+
+      function prependOrder(order) {
+        const li = document.createElement('li');
+        li.innerHTML = `
+          <div class="rounded-lg border border-slate-800 bg-slate-800/60 p-4">
+            <div class="flex items-center gap-3 text-sm">
+              <span class="font-semibold">#${order.id}</span>
+              <span class="text-slate-300">Table ${order.tableNumber}</span>
+              <span class="ml-auto inline-flex items-center rounded-full bg-sky-500/20 text-sky-300 px-2 py-0.5 text-xs">${order.status}</span>
+            </div>
+            <ul class="list-disc pl-6 mt-2 text-sm text-slate-200">${order.items.map(i => `<li>${i}</li>`).join('')}</ul>
+          </div>`;
+        ordersEl.prepend(li);
+      }
+
+      async function loadOrders() {
+        try {
+          const res = await fetch('/api/orders');
+          const data = await res.json();
+          ordersEl.innerHTML = '';
+          data.orders.slice().reverse().forEach(prependOrder);
+        } catch (_) {}
+      }
+
+      // Also reflect real-time updates in this view
+      function connectStream() {
+        const es = new EventSource('/api/stream');
+        es.addEventListener('order_created', (e) => {
+          try { const order = JSON.parse(e.data); prependOrder(order); } catch (_) {}
+        });
+        es.addEventListener('order_updated', (e) => {
+          // For simplicity, reload list on any update
+          loadOrders();
+        });
+        es.onerror = () => {
+          es.close();
+          setTimeout(connectStream, 2000);
+        };
+      }
+
+      document.getElementById('refresh-orders').addEventListener('click', loadOrders);
+      loadOrders();
+      connectStream();
+    </script>
+  </body>
+  </html>
+
+

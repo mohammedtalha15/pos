@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>POS - Kitchen</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><text y='50%' x='50%' dominant-baseline='middle' text-anchor='middle' font-size='48'>👨‍🍳</text></svg>">
+  </head>
+  <body class="min-h-screen bg-slate-950 text-slate-100">
+    <header class="sticky top-0 z-10 backdrop-blur supports-[backdrop-filter]:bg-slate-900/70 bg-slate-900/60 border-b border-slate-800">
+      <div class="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between">
+        <div class="flex items-center gap-3">
+          <span class="text-2xl">👨‍🍳</span>
+          <h1 class="text-lg font-semibold tracking-tight">Kitchen Display</h1>
+        </div>
+        <nav class="flex items-center gap-2">
+          <a href="/public/waiter.html" class="px-3 py-1.5 rounded-md text-slate-300 hover:bg-slate-800">Waiter</a>
+          <a href="/public/kitchen.html" class="px-3 py-1.5 rounded-md bg-slate-800 text-white">Kitchen</a>
+        </nav>
+      </div>
+    </header>
+
+    <main class="max-w-6xl mx-auto px-4 py-6">
+      <section class="rounded-xl border border-slate-800 bg-slate-900/60 shadow-xl">
+        <div class="p-5 border-b border-slate-800 flex items-center justify-between">
+          <h2 class="text-base font-semibold">Incoming Orders</h2>
+          <button id="refresh" class="rounded-md border border-slate-700 px-3 py-1.5 text-sm text-slate-200 hover:bg-slate-800">Refresh</button>
+        </div>
+        <ul id="orders" class="p-5 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4"></ul>
+      </section>
+    </main>
+
+    <template id="order-template">
+      <li class="rounded-xl border border-slate-800 bg-slate-800/60 p-4 flex flex-col gap-3">
+        <div class="flex items-center gap-3 text-sm">
+          <strong class="order-id"></strong>
+          <span class="table text-slate-300"></span>
+          <span class="status ml-auto inline-flex items-center rounded-full bg-sky-500/20 text-sky-300 px-2 py-0.5 text-xs"></span>
+        </div>
+        <ul class="order-items list-disc pl-6 text-sm text-slate-200"></ul>
+        <div class="flex gap-2">
+          <button class="mark-preparing rounded-md bg-yellow-300 text-slate-900 font-semibold px-3 py-1.5 hover:brightness-95">Preparing</button>
+          <button class="mark-ready rounded-md bg-sky-400 text-slate-900 font-semibold px-3 py-1.5 hover:brightness-95">Ready</button>
+        </div>
+      </li>
+    </template>
+
+    <script>
+      const ordersEl = document.getElementById('orders');
+      const tpl = document.getElementById('order-template');
+
+      function renderOrders(list) {
+        ordersEl.innerHTML = '';
+        list.forEach((o) => {
+          const node = tpl.content.cloneNode(true);
+          node.querySelector('.order-id').textContent = `#${o.id}`;
+          node.querySelector('.table').textContent = `Table ${o.tableNumber}`;
+          node.querySelector('.status').textContent = o.status;
+          const itemsUl = node.querySelector('.order-items');
+          o.items.forEach((i) => {
+            const li = document.createElement('li');
+            li.textContent = i;
+            itemsUl.appendChild(li);
+          });
+          const liRoot = node.querySelector('li');
+          liRoot.dataset.id = o.id;
+
+          liRoot.querySelector('.mark-preparing').addEventListener('click', () => updateStatus(o.id, 'preparing'));
+          liRoot.querySelector('.mark-ready').addEventListener('click', () => updateStatus(o.id, 'ready'));
+
+          ordersEl.appendChild(node);
+        });
+      }
+
+      async function updateStatus(id, status) {
+        try {
+          const res = await fetch(`/api/orders/${id}/status`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ status }),
+          });
+          if (!res.ok) throw new Error('Failed');
+          await loadOrders();
+        } catch (_) {}
+      }
+
+      async function loadOrders() {
+        try {
+          const res = await fetch('/api/orders');
+          const data = await res.json();
+          // Show newest first, with non-ready prioritized
+          const sorted = data.orders.slice().sort((a, b) => {
+            if (a.status === b.status) return (a.id > b.id ? -1 : 1);
+            const rank = { 'new': 0, 'preparing': 1, 'ready': 2 };
+            return rank[a.status] - rank[b.status];
+          });
+          renderOrders(sorted);
+        } catch (_) {}
+      }
+
+      function connectStream() {
+        const es = new EventSource('/api/stream');
+        es.addEventListener('order_created', () => { loadOrders(); });
+        es.addEventListener('order_updated', () => { loadOrders(); });
+        es.onerror = () => {
+          es.close();
+          setTimeout(connectStream, 2000);
+        };
+      }
+
+      document.getElementById('refresh').addEventListener('click', loadOrders);
+      loadOrders();
+      connectStream();
+    </script>
+  </body>
+  </html>
+
+
